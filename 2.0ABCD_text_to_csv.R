@@ -1,7 +1,9 @@
 if (!('dplyr' %in% installed.packages()[,"Package"]))  install.packages('dplyr')
+if (!('readr' %in% installed.packages()[,"Package"]))  install.packages('readr')
 if (!('here' %in% installed.packages()[,"Package"]))  install.packages('here')
 
 library(dplyr)
+library(readr)
 library(here)
 
 local_files <- list.files(pattern = ".txt")
@@ -22,25 +24,20 @@ if (length(which(grepl("ABCD_NBACK.txt", local_files))) > 0) local_files = local
 csv_files <- lapply(local_files, function(i){
   tryCatch({
     print(paste("Import: ", gsub("*.txt$|.txt", "", i)))
-    a <- read.csv(i, sep = "\t", header = TRUE, row.names=NULL, check.names=FALSE, quote = "", comment.char = "")
+    a <- read_tsv(i, col_names = TRUE, col_types = NULL, quote = "", skip_empty_rows = FALSE, comment = "")
     a = as.data.frame(sapply(a, function(x) gsub("\"", "", x)))
     names(a) = as.list(sapply(names(a), function(x) gsub("\"","",x)))
+    # Drop first row - contains header information, which is already present in the Data Dictionary
+    a = a[-1,] 
+    a = droplevels(a)
+    # Drop columns introduced by NDA, they are not required in the resulting table.
+    a = a[,!(names(a) %in% c("collection_id", "collection_title", "promoted_subjectkey", "subjectkey", "study_cohort_name"))]
     a
   }, error = function(e) {
     print(e)
     read.table(file = i, sep = '\t', header = TRUE)
   })
 })
-
-# The first row in each spreadsheet is the element description. Lets remove those for our data tables. 
-# This information is already present in the ABCD Data Dictionaries.
-
-for(p in 1:length(csv_files)){
-  dt = csv_files[[p]]
-  dt = dt[-1,]
-  dt = droplevels(dt)
-  csv_files[[p]] = dt
-}
 
 # Sometimes the "eventname" column shared in many instruments is called "visit". 
 # In freesqc01 both columns exist and are different:
@@ -54,14 +51,6 @@ for (p in 1:length(csv_files)) {
   csv_files[[p]] = dt
 }
 
-# Drop columns introduced by NDA, they are not required in the resulting table.
-
-
-for (p in 1:length(csv_files)) {
-  dt = csv_files[[p]]
-  dt = dt[,!(names(dt) %in% c("collection_id", "collection_title", "promoted_subjectkey", "subjectkey", "study_cohort_name"))]
-  csv_files[[p]] = dt
-}
 
 # There are some other columns that appear in more than one instrument. 
 # The last merge step would introduce duplicate columns if they remain in the data. 
@@ -85,6 +74,7 @@ for (p in 1:length(csv_files)) {
   }
   csv_files[[p]] = dt
 }
+
 # As a final step, re-calculate the levels in each table. 
 # Information that has been removed in previous steps could have changed the factor information in each table.
 
@@ -107,17 +97,45 @@ if(!file.exists(here("2.0-ABCD-Release"))){
 
 sapply(csv_files, function(i){
   short_name = gsub("_id", "", colnames(i)[1])
+  category = paste0(release_names_nda$category[match(short_name, release_names_nda$shortName)])
+  title = paste0(release_names_nda$title[match(short_name, release_names_nda$shortName)])
   if(short_name %in% release_names_nda$shortName){
-    file_name = gsub("/", "-", paste0(release_names_nda$title[match(short_name, release_names_nda$shortName)]))
+    file_name = gsub("/", "-", title)
   } else {
     file_name = short_name
   }
   tryCatch({
     print(paste("Writing", short_name, ":", file_name))
-    write.csv(i, file = paste0(here("2.0-ABCD-Release", paste0(file_name, ".csv"))),
+    if(!file.exists(here("2.0-ABCD-Release",category))){
+      dir.create(here("2.0-ABCD-Release", category))
+    }
+    write.csv(i, 
+              file = here("2.0-ABCD-Release", category, paste0(file_name, ".csv")),
               row.names = FALSE)
   }, error = function(e){
     print(e)
   })
 })
 
+# and save in native r format
+
+if(!file.exists(here("2.0-ABCD-Release-R-format"))){
+  dir.create(here("2.0-ABCD-Release-R-format"))
+}
+
+sapply(csv_files, function(i){
+  short_name = gsub("_id", "", colnames(i)[1])
+  title = paste0(release_names_nda$title[match(short_name, release_names_nda$shortName)])
+  if(short_name %in% release_names_nda$shortName){
+    file_name = gsub("/", "-", title)
+  } else {
+    file_name = short_name
+  }
+  tryCatch({
+    print(paste("Writing in native R format", short_name, ":", file_name))
+    saveRDS(i, 
+            file = here("2.0-ABCD-Release-R-format", paste0(file_name, ".Rds")))
+  }, error = function(e){
+    print(e)
+  })
+})
